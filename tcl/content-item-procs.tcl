@@ -18,6 +18,7 @@ ad_proc -public ::content::item::new {
     {-creation_date ""}
     {-creation_user ""}
     {-context_id ""}
+    {-package_id ""}
     {-creation_ip ""}
     {-item_subtype "content_item"}
     {-content_type "content_revision"}
@@ -31,21 +32,17 @@ ad_proc -public ::content::item::new {
     {-is_live ""}
     {-storage_type "file"}
     {-attributes ""}
+    {-tmp_filename ""}
 } {
     @author Dave Bauer (dave@thedesignexperience.org)
     @creation-date 2004-05-28
 
     Create a new content item This proc creates versioned content
-items where content_type iscontent_revision or subtypes of content
-revision. There are procedures for each other base content
-item. This procdedure uses package_instantiate object. Under
-PostgreSQL the object_type new function must be registered with
-define_function_args.  For correct creation of extended content types pass
-title and content in the attributes paramter which will cause
-content::revision::new to be called and create a proper extended
-content type revision.
-    If title, text, or data are specified a
-content revision will also be created. 
+    items where content_type iscontent_revision or subtypes of content
+    revision. There are procedures for each other base content
+    item. This procdedure uses package_instantiate object. Under
+    PostgreSQL the object_type new function must be registered with
+    define_function_args.
 
     @param name
     @param item_id - item_id of this content_item. If this is not
@@ -53,7 +50,8 @@ content revision will also be created.
     @param parent_id - parent object of this content_item
     @param item_subtype
     @param content_type - content_revision or subtype of content_revision
-    @param context_id -
+    @param context_id - Context of the item. usually used in conjunction with permissions.
+    @param package_id - Package ID of the object
     @param creation_user -
     @param creation_ip -
     @param creation_date - defaults to current date and time
@@ -62,6 +60,9 @@ content revision will also be created.
     @param title - title of content_revision to be created
     @param description of content_revision to be created
     @param text - text of content revision to be created
+    @param tmp_filename file containing content to be added to new revision
+    @param nls_language - ???
+    @param data - ???
     @param attributes - A list of lists ofpairs of additional attributes and
     their values to pass to the constructor. Each pair is a list of two
      elements: key => value such as
@@ -71,6 +72,17 @@ content revision will also be created.
 
     @see content::symlink::new content::extlink::new content::folder::new
 } {
+    if {[empty_string_p $creation_user]} {
+        set creation_user [ad_conn user_id]
+    }
+
+    if {[empty_string_p $creation_ip]} {
+        set creation_ip [ad_conn peeraddr]
+    }
+    if {[empty_string_p $package_id]} {
+        set package_id [ad_conn package_id]
+    }
+
     set var_list [list]
     lappend var_list \
         [list name $name] \
@@ -80,6 +92,7 @@ content revision will also be created.
         [list creation_date $creation_date ] \
         [list creation_user $creation_user ] \
         [list context_id $context_id ] \
+        [list package_id $package_id ] \
         [list creation_ip $creation_ip ] \
         [list item_subtype $item_subtype ] \
         [list content_type $content_type ] \
@@ -97,7 +110,8 @@ content revision will also be created.
     # the content type is not the object type of the cr_item so we pass in
     # the cr_item subtype here and content_type as part of
     # var_list
-
+    db_transaction {
+    db_dml lock_objects "LOCK TABLE acs_objects IN SHARE ROW EXCLUSIVE MODE"
     set item_id [package_exec_plsql \
 		     -var_list $var_list \
 		     content_item new]
@@ -111,6 +125,7 @@ content revision will also be created.
     if {[exists_and_not_null title] \
             || [exists_and_not_null text] \
             || [exists_and_not_null data] \
+            || [exists_and_not_null tmp_filename] \
             || [llength $attributes]} {
         content::revision::new \
             -item_id $item_id \
@@ -120,9 +135,15 @@ content revision will also be created.
             -mime_type $mime_type \
             -content_type $content_type \
             -is_live $is_live \
-            -attributes $attributes
+	    -package_id $package_id \
+	    -creation_user $creation_user \
+	    -creation_ip $creation_ip \
+	    -creation_date $creation_date \
+	    -nls_language $nls_language \
+	    -tmp_filename $tmp_filename \
+	    -attributes $attributes
     }
-    
+    }    
     return $item_id
 
 }
@@ -157,7 +178,7 @@ ad_proc -public ::content::item::rename {
                                [list item_id $item_id] \
                                [list name $name]
                           ] \
-                content_item rename]
+                content_item edit_name]
 }
 
 ad_proc -public ::content::item::move {
@@ -209,6 +230,9 @@ ad_proc -public ::content::item::get {
         # content_type query was unsucessful, item does not exist
         return 0
     }
+    if {[string equal "content_folder" $content_type]} {
+        return [db_0or1row get_item_folder "" -column_array local_array]
+    }
     set table_name [db_string get_table_name "select table_name from acs_object_types where object_type=:content_type"]
     set table_name "${table_name}x"    
     # get attributes of the content_item use the content_typex view
@@ -258,7 +282,7 @@ ad_proc -public ::content::item::update {
 
 	# we have valid attributes, update them
 
-	set query_text "update cr_items set ${update_text}"
+	set query_text "update cr_items set ${update_text} where item_id=:item_id"
 	db_dml item_update $query_text
     }
 }
@@ -701,4 +725,74 @@ ad_proc -public content::item::copy {
                                [list creation_ip $creation_ip] \
                                [list name $name]] \
                            content_item copy]
+}
+
+ad_proc -public content::item::upload_file {
+    {-upload_file:required}
+    {-parent_id:required}
+    {-package_id ""}
+} {
+    Store the file uploaded under the parent_id if a file was uploaded
+    
+    @author Malte Sussdorff (sussdorff@sussdorff.de)
+    @creation-date 2005-06-21
+    
+    @param upload_file
+
+    @param parent_id
+
+    @return the revision_id of the generated item
+    
+    @error 
+} {
+
+    set filename [template::util::file::get_property filename $upload_file]
+    if {$filename != "" } {
+	set tmp_filename [template::util::file::get_property tmp_filename $upload_file]
+	set mime_type [template::util::file::get_property mime_type $upload_file]
+	set tmp_size [file size $tmp_filename]
+	set extension [file extension $filename]
+	if {![exists_and_not_null title]} {
+
+	    # maltes: The following regsub garbles the title and consequently the filename as well. 
+	    # "info_c+w.zip" will become "info_c+"
+	    # This is bad, first of all because a letter is missing entirely. Additionally 
+	    # the title in itself should be the original filename, after all this is what
+	    # the user uploaded, not something stripped of its extension.
+	    # So I commented this out until someone can either fix the regsub but more importantly
+	    # can explain why the title should not contain the extension.
+
+            # DRB: removing the explicit "." isn't sufficient because the "." in the
+            # extension also matches any char unless it is escaped.  Like Malte, I
+            # see no reason to get rid of the extension in the title anyway ...
+
+	    # regsub -all ".${extension}\$" $filename "" title
+	    set title $filename
+	}
+	
+	set existing_filenames [db_list get_parent_existing_filenames {}]
+	set filename [util_text_to_url \
+			  -text ${title} -existing_urls "$existing_filenames" -replacement "_"]
+
+        set revision_id [cr_import_content \
+			     -storage_type "file" -title $title -package_id $package_id $parent_id $tmp_filename $tmp_size $mime_type $filename]
+
+	content::item::set_live_revision -revision_id $revision_id
+
+	return $revision_id
+    } 
+}
+
+ad_proc -public content::item::get_id_by_name {
+    {-name:required}
+    {-parent_id:required}
+} {
+    Returns the item_id of the a content item with the passed in name
+
+    @param name Name of the content item
+    @param parent_id Parent_id of the content item
+
+    @return the item id belonging to the name, empty string if no item_id was found
+} {
+    return [db_string get_item_id_by_name {} -default ""]
 }

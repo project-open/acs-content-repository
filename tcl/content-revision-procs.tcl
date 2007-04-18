@@ -25,8 +25,11 @@ ad_proc -public ::content::revision::new {
     {-content_type}
     {-creation_user}
     {-creation_ip}
+    {-package_id}
     {-attributes}
     {-is_live "f"}
+    {-tmp_filename ""}
+    {-storage_type ""}
 } {
     Adds a new revision of a content item. If content_type is not
     passed in, we determine it from the content item. This is needed
@@ -59,6 +62,18 @@ ad_proc -public ::content::revision::new {
     @param creation_user
 
     @param creation_ip
+ 
+    @param package_id Package_id content belongs to
+
+    @param is_live True is revision should be set live
+
+    @param tmp_filename file containing content to be added to revision
+
+    @param package_id
+
+    @param package_id
+
+    @param is_live
 
     @param attributes A list of lists of pairs of additional attributes and
     their values to pass to the constructor. Each pair is a list of two
@@ -81,9 +96,14 @@ ad_proc -public ::content::revision::new {
     if {![exists_and_not_null content_type]} {
 	set content_type [::content::item::content_type -item_id $item_id]
     }
+    if {![exists_and_not_null storage_type]} {
+	set storage_type [db_string get_storage_type ""]
+    }
+    if {![info exists package_id]} {
+        set package_id [ad_conn package_id]
+    }
     set attribute_names ""
     set attribute_values ""
-    set lob_values [list]
 
     if { [exists_and_not_null attributes] } {
 	set type_attributes [package_object_attribute_list $content_type]
@@ -93,67 +113,68 @@ ad_proc -public ::content::revision::new {
 	# parameters to this procedure
 	
 	foreach type_attribute $type_attributes {
-	    if {![string equal "cr_revisions" [lindex $type_attribute 1]]} {
-		if {[db_type] == "oracle" && [string equal "text" [lindex $type_attribute 4]]} {
-		    set lob_attributes([lindex $type_attribute 2]) [list [lindex $type_attribute 7] [lindex $type_attribute 8]]
-		} else {
-		    lappend valid_attributes [lindex $type_attribute 2]
-		}
+	    if {![string equal "cr_revisions" [lindex $type_attribute 1]] \
+                && ![string equal "acs_objects" [lindex $type_attribute 1]]} {
+		lappend valid_attributes [lindex $type_attribute 2]
 	    }
 	}
 	foreach attribute_pair $attributes {
             foreach {attribute_name attribute_value} $attribute_pair {break}
-	    if {[lsearch $valid_attributes $attribute_name] > -1} {
+	    if {[lsearch $valid_attributes $attribute_name] > -1}  {
+
                 # first add the column name to the list
 		append attribute_names  ", ${attribute_name}"		
 		# create local variable to use for binding
 		set $attribute_name $attribute_value
 		append attribute_values ", :${attribute_name}"
 	    }
-	    if {[info exists lob_attributes($attribute_name)]} {
-		lappend lob_values $attribute_name $attribute_value [lindex $lob_attributes($attribute_name) 0] [lindex $lob_attributes($attribute_name) 1]
-	    }
 	}
     }
     
     set table_name [db_string get_table_name "select table_name from acs_object_types where object_type=:content_type"]
-    set table_name "${table_name}i"
 
-    set query_text "insert into ${table_name}
-                    (revision_id, object_type, creation_user, creation_date, creation_ip, title, description, item_id, mime_type $attribute_names)
-            values (:revision_id, :content_type, :creation_user, :creation_date, :creation_ip, :title, :description, :item_id, :mime_type $attribute_values)"
+    set query_text "insert into ${table_name}i
+                    (revision_id, object_type, creation_user, creation_date, creation_ip, title, description, item_id, object_package_id, mime_type $attribute_names)
+            values (:revision_id, :content_type, :creation_user, :creation_date, :creation_ip, :title, :description, :item_id, :package_id, :mime_type $attribute_values)"
     db_transaction {
-        if {[string equal "" $revision_id]} {
+        db_dml lock_objects "LOCK TABLE acs_objects IN SHARE ROW EXCLUSIVE MODE"
+        if {$revision_id eq ""} {
 	    set revision_id [db_nextval "acs_object_id_seq"]
 	}
-        db_dml insert_revision $query_text
-        update_content \
+        # the postgres "insert into view" is rewritten by the rule into a "select"
+        [expr {[db_driverkey ""] eq "postgresql" ? "db_0or1row" : "db_dml"}] \
+	    insert_revision $query_text
+        ::content::revision::update_content \
+	    -item_id $item_id \
             -revision_id $revision_id \
-            -content $content
-	foreach {lob_attribute lob_value lob_table lob_id_column} $lob_values {
-	    db_dml update_lob_attribute {} -clobs [list $lob_value]
-	}
+            -content $content \
+	    -tmp_filename $tmp_filename \
+	    -storage_type $storage_type \
+	    -mime_type $mime_type
     }
-ns_log debug "
-DB --------------------------------------------------------------------------------
-DB DAVE debugging /var/lib/aolserver/openacs-5-1/packages/acs-content-repository/tcl/content-revision-procs.tcl
-DB --------------------------------------------------------------------------------
-DB is_live = '${is_live}' \n
-DB revision_id = '${revision_id}'"
     if {[string is true $is_live]} {
         content::item::set_live_revision -revision_id $revision_id
     }
     return $revision_id
 }
 
-ad_proc -public content::revision::update_content {
+ad_proc -public ::content::revision::update_content {
+    -item_id
     -revision_id
     -content
+    -storage_type
+    -mime_type 
+    {-tmp_filename ""}
+    
 } {
     
     Update content column seperately. Oracle does not allow insert
     into a BLOB.
     
+    This assumes that if storage type is lob and no file is specified
+    that the content is really text and store it in the text column
+    in PostgreSQL
+
     @author Dave Bauer (dave@thedesignexperience.org)
     @creation-date 2005-02-09
     
@@ -165,7 +186,37 @@ ad_proc -public content::revision::update_content {
     
     @error 
 } {
-    db_dml update_content "" -blobs [list $content]
+
+     switch $storage_type {
+	file {
+	    if {$tmp_filename eq ""} {
+		set tmp_filename [ns_mktemp /tmp/XXXXXX]
+		set fd [open $tmp_filename w]
+		puts $fd $content
+		close $fd
+	    }
+	    set tmp_size [file size $tmp_filename]
+	    set filename [cr_create_content_file $item_id $revision_id $tmp_filename]
+	    db_dml set_file_content ""
+	}
+	lob {
+	    if {$tmp_filename ne ""} {
+		# handle file
+		set filename [cr_create_content_file $item_id $revision_id $tmp_filename]		
+	        db_dml set_lob_content "" -blob_files [list $tmp_filename]
+	        db_dml set_lob_size ""
+	    } else {
+		# handle blob
+		db_dml update_content "" -blobs [list $content]
+	    }
+	}
+	default {
+		# HAM : 112505
+		# I added a default switch because in some cases
+		#   storage type is text and revision is not being updated
+		db_dml update_content "" -blobs [list $content]
+	}
+    }
 }
 
 ad_proc -public content::revision::content_copy {
@@ -300,6 +351,17 @@ ad_proc -public content::revision::is_live {
 }
 
 
+ad_proc -public content::revision::item_id {
+    -revision_id:required
+} {
+    @param revision_id
+
+    @return item_id
+} {
+    return [db_string item_id {} -default ""]
+}
+
+
 ad_proc -public content::revision::read_xml {
     -item_id:required
     -revision_id:required
@@ -391,5 +453,24 @@ ad_proc -public content::revision::update_attribute_index {
 } {
 } {
     return [package_exec_plsql content_revision update_attribute_index]
+}
+
+
+ad_proc -public content::revision::get_cr_file_path {
+    -revision_id 
+} {
+    Get the path to content in the filesystem
+    @param revision_id
+
+    @return path to filesystem stored revision content
+
+    @author Dave Bauer (dave@solutiongrove.com)
+    @creation-date 2006-08-27
+} {
+    # the file path is stored in filename column on oracle
+    # and content in postgresql, but we alias to filename so it makes
+    # sense
+    db_1row get_storage_key_and_path ""
+    return [cr_fs_path $storage_area_key]${filename}
 }
 
