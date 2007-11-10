@@ -2270,27 +2270,22 @@ select define_function_args('content_item__get_latest_revision','item_id');
 create or replace function content_item__get_latest_revision (integer)
 returns integer as '
 declare
-  get_latest_revision__item_id                alias for $1;
-  v_revision_id                               integer;
-  v_rec                                       record;
+	get_latest_revision__item_id                alias for $1;
+	v_revision_id                               integer;
+	v_rec                                       record;
 begin
-  for v_rec in 
-  select 
-    r.revision_id 
-  from 
-    cr_revisions r, acs_objects o
-  where 
-    r.revision_id = o.object_id
-  and 
-    r.item_id = get_latest_revision__item_id
-  order by 
-    o.creation_date desc
-  LOOP
-      v_revision_id := v_rec.revision_id;
-      exit;
-  end LOOP;
+	for v_rec in 
+		select 	r.revision_id 
+		from	cr_revisions r, acs_objects o
+		where	r.revision_id = o.object_id
+			and r.item_id = get_latest_revision__item_id
+		order by o.creation_date desc
+	LOOP
+		v_revision_id := v_rec.revision_id;
+		exit;
+	end LOOP;
 
-  return v_revision_id;
+	return v_revision_id;
  
 end;' language 'plpgsql' strict stable;
 
