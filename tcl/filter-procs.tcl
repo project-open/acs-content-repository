@@ -24,10 +24,10 @@ ad_proc -public content::get_template_root {} {
 
     If it is not found in any of these places, it defaults to
 
-    [acs_root_dir]/templates
+    $::acs::rootdir/templates
 
     If the value resulting from the search does not start with a '/'
-    it is taken to be relative to [acs_root_dir]
+    it is taken to be relative to $::acs::rootdir
 
     @return the template root (full path from /)
 } {
@@ -46,7 +46,7 @@ ad_proc -public content::get_template_root {} {
 
     if { [string index $template_root 0] ne "/" } {
         # Relative path, prepend server_root
-        set template_root "[acs_root_dir]/$template_root"
+        set template_root "$::acs::rootdir/$template_root"
     }
 
     return [ns_normalizepath $template_root]
@@ -138,9 +138,14 @@ ad_proc -public content::get_template_url {} {
 }
 
 
-ad_proc -public content::get_folder_labels { { varname "folders" } } {
+ad_proc -deprecated -public content::get_folder_labels { { varname "folders" } } {
     Set a data source in the calling frame with folder URL and label
-    Useful for generating a context bar
+    Useful for generating a context bar.
+
+    This function returns a hard-coded name for the root level. One should use for path generation for items the
+    appropriate API, such as e.g. content::item::get_virtual_path
+
+    @see content::item::get_virtual_path 
 } {
 
     variable item_id
@@ -282,7 +287,7 @@ ad_proc -public content::init {
 
 content::get_content $content_type
 
-if { !\[string equal \"text/html\" \$content(mime_type)\] && !\[ad_html_text_convertable_p -from \$content(mime_type) -to text/html\] } {
+if { \"text/html\" ne \$content(mime_type) && !\[ad_html_text_convertable_p -from \$content(mime_type) -to text/html\] } {
     \# don't render its content
     cr_write_content -revision_id \$content(revision_id)
     ad_script_abort
@@ -313,7 +318,7 @@ ad_proc -public content::deploy { url_stub } {
     render the template and write it to the file system
     with template::util::write_file
 } {
-    set output_path [ns_info pageroot]$url_stub
+    set output_path $::acs::pageroot$url_stub
 
     init url_stub root_path
 

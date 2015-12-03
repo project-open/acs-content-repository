@@ -101,18 +101,16 @@ ad_proc -public image::get_file_info {
 
     @param filename Full path to file in the filesystem
 
-    @return List of width height mime_type in array get format
-
-    @author Dave Bauer
-    @creation-date 2006-08-27
+    @return List of width, height, and mime_type
 } {
-    if {![catch {set info [image::imagemagick_identify -filename $filename]} errmsg]} {
-	return $info
-    } else {
-	set size [image::ns_size -filename $filename]
-	set mime_type [image::filename_mime_type -filename $filename]
+    # First try to get it via built-in support. If this fails, use
+    # image magic.
+    set size [image::ns_size -filename $filename]
+    if {[lindex $size 0] ne ""} {
+	set mime_type [image::mime_type -filename $filename]
 	return [concat $size $mime_type]
     }
+    return [image::imagemagick_identify -filename $filename]
 }
 
 ad_proc -public image::get_file_info_array {
@@ -132,10 +130,8 @@ ad_proc -public image::get_file_info_array {
     @see image::get_info
 } {
     upvar $array_name local_array
-    set info [image::get_file_info -filename $filename]
-    set local_array(width) [lindex $info 0]
-    set local_array(height) [lindex $info 1]
-    set local_array(mime_type) [lindex $info 2]
+    lassign [image::get_file_info -filename $filename] \
+	local_array(width) local_array(height) local_array(mime_type)
 }
 
 ad_proc -public image::get_file_dimensions {
@@ -145,9 +141,8 @@ ad_proc -public image::get_file_dimensions {
     Get the width and height of an image from
     a file in the filesystem. 
 
-    This uses for an imagemagick binary, if that is not available,
-    it tries ns_gifsize, ns_jpgsize AOLserver commands. We use imagemagick
-    first since it supports many more image formats.
+    This tries first to use built-in ns_*-support, and if not available, if talls back to 
+    imagemagick. We use imagemagick first since it supports many more image formats.
 
     @param filename full path to file in the filesystem
     
@@ -156,13 +151,14 @@ ad_proc -public image::get_file_dimensions {
     @creation-date 2006-08-28
     @author Dave Bauer (dave@solutiongrove.com)
 } {
-    if {[catch {set size [image::imagemagick_file_dimensions -filename $filename]} errmsg]} {
-	set size [image::ns_size -filename $filename -mime_type $mime_type]
+    set size [image::ns_size -filename $filename -mime_type $mime_type]
+    if {[lindex $size 0] eq ""} {
+	catch {set size [image::imagemagick_file_dimensions -filename $filename]}
     }
     return $size
 }
 
-ad_proc -public image::imagmagick_identify {
+ad_proc -public image::imagemagick_identify {
     -filename
 } {
     Get width height and mime type from imagemagick
@@ -174,10 +170,11 @@ ad_proc -public image::imagmagick_identify {
     @author Dave Bauer (dave@solutiongrove.com)
     @creation-date 2006-08-27
 } {
-    if { [ catch {set out [exec [parameter::get -parameter ImageMagickPath]/identify -format "%w %h %m %k %q %#" $file]} errMsg]} { 
+    if { [ catch {set out [exec [image::identify_binary] \
+			       -format "%w %h %m %k %q %#" $filename]} errMsg]} { 
         return -code error $errMsg
-    }            
-    foreach {width height type} [split $out { }] {}
+    }
+    lassign $out width height type
     switch $type { 
         JPG - JPEG {
             set mime_type image/jpeg
@@ -208,7 +205,7 @@ ad_proc -public image::imagemagick_file_dimensions {
     @author Dave Bauer (dave@solutiongrove.com)
     @creation-date 2006-08-27
 } {
-    set geometry [exec [image::identify_binary] -size geometry $filename]
+    set geometry [exec [image::identify_binary] -size %w $filename]
     set width ""
     set height ""
     regexp {(\d+)x(\d+)} $geometry x width height
@@ -220,7 +217,7 @@ ad_proc -public image::identify_binary {
     Find imagemagick identify binary
     
     @author Dave Bauer (dave@solutiongrove.com)
-    @creation_date 2006-08-27
+    @creation-date 2006-08-27
 } {
     # FIXME create parameter
     return [parameter::get \
@@ -234,7 +231,7 @@ ad_proc -public image::convert_binary {
     Find imagemagick convert binary
     
     @author Dave Bauer (dave@solutiongrove.com)
-    @creation_date 2006-08-27
+    @creation-date 2006-08-27
 } {
     #FIXME create parameter
     return [parameter::get \
@@ -243,40 +240,74 @@ ad_proc -public image::convert_binary {
 		-default "/usr/bin/convert"]
 }
 
-ad_proc -public image::ns_size {
+if {[ns_info name] eq "NaviServer"} {
+        ad_proc -public image::ns_size {
+	-filename
+	{-mime_type ""}
+    } {
+	Use ns_gifsize/ns_jpegsize to try to get the size of an image
+	
+	@param filename Full path to file in the filesystem
+	@return List containing width and height
+    } {
+	set w ""
+	set h ""
+	if {[file exists $filename] && [ns_imgtype $filename] ne "unknown"} {
+	    lassign [ns_imgsize $filename] w h
+	}
+	return [list $w $h]
+    }
+} else {
+    ad_proc -public image::ns_size {
+	-filename
+	{-mime_type ""}
+    } {
+	Use ns_gifsize/ns_jpegsize to try to get the size of an image
+	
+	@param filename Full path to file in the filesystem
+	@return List containing width and height
+	@author Dave Bauer (dave@solutiongrove.com)
+	@creation-date 2006-08-27
+    } {
+	switch -glob -- \
+	    [image::filename_mime_type \
+		 -filename $filename \
+		 -mime_type $mime_type] {
+		     *gif {
+			 set size [ns_gifsize $filename]
+		     }
+		     *jpg -
+		     *jpeg {
+			 set size [ns_jpegsize $filename]
+		     }
+		     default {
+			 set size [list "" ""]
+		     }
+		 }
+	return $size
+    }
+}
+
+ad_proc -public image::mime_type {
     -filename
-    {-mime_type ""}
 } {
-    Use ns_gifsize/ns_jpegsize to try to get the size of an image
+    Use ns-built-in mimetype or image magick if not available
 
-    @param filename Full path to file in the filesystem
-
-    @return List in array get format with names of width and height
-
-    @author Dave Bauer (dave@solutiongrove.com)
-    @creation_date 2006-08-27
+    @param filename Filename of image file
 } {
-    switch -- \
-	[image::filename_mime_type \
-	     -filename $filename \
-	     -mime_type $mime_type] {
-		 *gif {
-		     set size [ns_gifsize $filename]
-		 }
-		 *jpg -
-		 *jpeg {
-		     set size [ns_jpegsize $filename]
-		 }
-		 default {
-		     set size [list "" ""]
-		 }
-	     }
-    return $size
+    if {[info commands ns_imgmime] ne ""} {
+	set mime_type [ns_imgmime $filename]
+	if {$mime_type ne "image/unknown"} {
+	    return $mime_type
+	}
+    }
+    lassign [image::imagemagick_identify] . . mime_type
+    return $mime_type
 }
 
 ad_proc -public image::filename_mime_type {
     -filename
-    -mime_type 
+    {-mime_type ""}
 } {
     Use ns_guesstype if we don't know the mime_type
 
@@ -284,7 +315,7 @@ ad_proc -public image::filename_mime_type {
     @param mime_type If known, the mime type of the file
 
     @author Dave Bauer (dave@thedesignexperience.org)
-    @creation_date 2006-08-27
+    @creation-date 2006-08-27
 } {
     if {$mime_type eq ""} {
 	set mime_type [ns_guesstype $filename]
@@ -316,7 +347,7 @@ ad_proc -public image::resize {
     @return image item_id of the thumbnail
 
     @author Dave Bauer (dave@solutiongrove.com)
-    @cretion-date 2006-08-27
+    @creation-date 2006-08-27
 } {
     if {$revision_id eq ""} {
 	set revision_id [content::item::get_best_revision -item_id $item_id]
@@ -358,7 +389,7 @@ ad_proc -public image::get_size_item_id {
     Get the item_id of a resized version of an image
     
     @param item_id Original image item_id
-    @size_name Name of the size to get
+    @param size_name Name of the size to get
 
     @author Dave Bauer (dave@solutiongrove.com)
     @creation-date 2006-08-27

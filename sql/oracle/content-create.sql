@@ -10,25 +10,6 @@
 -- License.  Full text of the license is available from the GNU Project:
 -- http://www.fsf.org/copyleft/gpl.html
 
-----------------------------------
--- CMS datatypes
-----------------------------------
-
--- create ats datatypes for cms
-begin
-  insert into acs_datatypes
-    (datatype, max_n_values)
-  values
-    ('text', null);
-
-  insert into acs_datatypes
-    (datatype, max_n_values)
-  values
-    ('keyword', 1);
-
-end;
-/
-
 
 --------------------------------------------------------------
 -- MIME TYPES
@@ -785,7 +766,8 @@ begin
         ) select :old.filename, i.storage_area_key
             from cr_items i
            where i.item_id = :old.item_id
-             and i.storage_type = 'file';
+             and i.storage_type = 'file'
+             and r.content is not null;
 
 end cr_cleanup_cr_files_del_trg;
 /
