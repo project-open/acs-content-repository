@@ -130,6 +130,8 @@ ad_proc -public -deprecated cr::keyword::item_get_assigned {
 
     If parent_id is supplied, only keywords that are children of
     parent_id are listed.
+    
+    @see content::keyword::item_get_assigned
 } {
 
     if {[info exists parent_id]} {
@@ -163,3 +165,9 @@ ad_proc -public -deprecated cr::keyword::get_children {
     return [content::keyword::get_children -parent_id $parent_id]
 }
     
+
+# Local variables:
+#    mode: tcl
+#    tcl-indent-level: 4
+#    indent-tabs-mode: nil
+# End:
