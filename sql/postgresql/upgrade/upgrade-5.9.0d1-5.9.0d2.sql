@@ -10,32 +10,33 @@
 -- functions although the create script do not define this triggers.
 -- It seems that an update script was missing.
 -- 
-DROP TRIGGER cr_folder_del_ri_trg ON cr_items;
-DROP FUNCTION cr_folder_del_ri_trg();
+DROP TRIGGER if exists cr_folder_del_ri_trg ON cr_items;
+DROP FUNCTION if exists cr_folder_del_ri_trg();
 
-DROP TRIGGER cr_folder_ins_up_ri_trg ON cr_folders;
-DROP FUNCTION cr_folder_ins_up_ri_trg();
+DROP TRIGGER if exists cr_folder_ins_up_ri_trg ON cr_folders;
+DROP FUNCTION if exists cr_folder_ins_up_ri_trg();
 
 -- 
 -- Handle latest_revision and live_revision via foreign keys
 --
-ALTER TABLE cr_items DROP CONSTRAINT cr_items_latest_fk;
+ALTER TABLE cr_items DROP CONSTRAINT if exists cr_items_latest_fk;
 ALTER TABLE cr_items ADD CONSTRAINT cr_items_latest_fk
 FOREIGN KEY (latest_revision) REFERENCES cr_revisions(revision_id);
 
-ALTER TABLE cr_items DROP CONSTRAINT cr_items_live_fk;
+ALTER TABLE cr_items DROP CONSTRAINT if exists cr_items_live_fk;
 ALTER TABLE cr_items ADD CONSTRAINT cr_items_live_fk
 FOREIGN KEY (live_revision) REFERENCES cr_revisions(revision_id);
 
 
-DROP TRIGGER cr_revision_del_ri_tr on cr_items;
-DROP FUNCTION cr_revision_del_ri_tr();
+DROP TRIGGER if exists cr_revision_del_ri_tr on cr_items;
+DROP FUNCTION if exists cr_revision_del_ri_tr();
 
-DROP TRIGGER cr_revision_ins_ri_tr on cr_items;
-DROP FUNCTION cr_revision_ins_ri_tr();
+DROP TRIGGER if exists cr_revision_ins_ri_tr on cr_items;
+DROP FUNCTION if exists cr_revision_ins_ri_tr();
 
-DROP TRIGGER cr_revision_up_ri_tr on cr_items;
-DROP FUNCTION cr_revision_up_ri_tr();
+DROP TRIGGER if exists cr_revision_up_ri_tr on cr_items;
+DROP FUNCTION if exists cr_revision_up_ri_tr();
 
-DROP TRIGGER cr_revision_del_rev_ri_tr on cr_revisions;
-DROP FUNCTION cr_revision_del_rev_ri_tr();
+DROP TRIGGER if exists cr_revision_del_rev_ri_tr on cr_revisions;
+DROP FUNCTION if exists cr_revision_del_rev_ri_tr();
+
