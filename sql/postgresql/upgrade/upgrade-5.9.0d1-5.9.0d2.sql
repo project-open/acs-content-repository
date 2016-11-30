@@ -19,9 +19,18 @@ DROP FUNCTION if exists cr_folder_ins_up_ri_trg();
 -- 
 -- Handle latest_revision and live_revision via foreign keys
 --
+
+-- fraber 161128: Delete inconsistent entries
+update cr_items set latest_revision = null 
+where latest_revision in (select latest_revision from cr_items except select revision_id from cr_revisions);
+
 ALTER TABLE cr_items DROP CONSTRAINT if exists cr_items_latest_fk;
 ALTER TABLE cr_items ADD CONSTRAINT cr_items_latest_fk
 FOREIGN KEY (latest_revision) REFERENCES cr_revisions(revision_id);
+
+-- fraber 161128: Delete inconsistent entries
+update cr_items set live_revision = null 
+where live_revision in (select live_revision from cr_items except select revision_id from cr_revisions);
 
 ALTER TABLE cr_items DROP CONSTRAINT if exists cr_items_live_fk;
 ALTER TABLE cr_items ADD CONSTRAINT cr_items_live_fk
