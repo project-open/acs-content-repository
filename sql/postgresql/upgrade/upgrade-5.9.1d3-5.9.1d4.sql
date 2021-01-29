@@ -91,6 +91,37 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+
+
+-- fraber 2021-01-26: Issues upgrading Weber
+--
+create or replace function inline_0 ()
+returns integer as $body$
+declare
+	row			RECORD;
+BEGIN
+	FOR row IN
+		select	ot.object_type, ot.table_name
+		from	acs_object_types ot
+		where	not exists (
+				select	*
+				from	information_schema.tables ist
+				where	lower(ot.table_name) = lower(ist.table_name)
+			)
+			and object_type in ('ams_object_revision', 'journal_article', 'journal_issue', 'news_item')
+		order by ot.object_type
+	LOOP
+		delete from acs_attributes where object_type = row.object_type;
+		delete from im_rest_object_types where object_type = row.object_type;
+		delete from acs_objects where object_type = row.object_type;
+		delete from acs_object_types where object_type = row.object_type;
+	END LOOP;
+	return 0;
+end;$body$ language 'plpgsql';
+select inline_0 ();
+drop function inline_0 ();
+
+
 -- upgrade types
 
 WITH RECURSIVE cr_types as (
@@ -99,3 +130,4 @@ UNION ALL
     select ot.object_type from acs_object_types ot,cr_types 
     where ot.supertype = cr_types.object_type
 ) select object_type, content_type__refresh_view(object_type) from cr_types;
+

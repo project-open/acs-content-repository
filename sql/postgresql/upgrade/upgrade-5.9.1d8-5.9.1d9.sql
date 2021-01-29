@@ -23,6 +23,11 @@ FOREIGN KEY (child_id) REFERENCES cr_items(item_id) ON DELETE CASCADE;
 --
 -- Add FK constraints for cr_item_rels with cascade operations
 --
+
+-- fraber 2021-01-26: Issues upgrading Weber
+delete from cr_item_rels where item_id in (select item_id from cr_item_rels cir where not exists (select * from cr_items ci where ci.item_id = cir.item_id));
+
+
 ALTER TABLE cr_item_rels DROP CONSTRAINT IF EXISTS cr_item_rels_item_id_fk;
 ALTER TABLE cr_item_rels ADD CONSTRAINT cr_item_rels_item_id_fk
 FOREIGN KEY (item_id) REFERENCES cr_items(item_id) ON DELETE CASCADE;
